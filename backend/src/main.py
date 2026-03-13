@@ -17,9 +17,15 @@ class Settings(BaseSettings):
 
 # 2. Instantiate the settings
 settings = Settings()
+server_mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="fastapi-backend")
 
 app = FastAPI(title="Smart Home API")
 fake_database = []
+
+@app.on_event("startup")
+def startup_event():
+    server_mqtt.connect("localhost", 1883, 60)
+    server_mqtt.loop_start()
 
 @app.post("/api/data")
 async def receive_sensor_data(
@@ -34,3 +40,13 @@ async def receive_sensor_data(
     print(f"✅ Received real data: Temp = {reading.temperature}°C")
     
     return {"status": "success"}
+
+@app.post("/api/command")
+async def send_device_command(command: DeviceCommand):
+    mqtt_topic = f"commands/{command.device_type}/{command.room}"
+    server_mqtt.publish(mqtt_topic, command.state)
+    print(f"📤 Sent command: {command.device_type} in {command.room} -> {command.state}")
+    return {
+        "status": "success", 
+        "message": "Command forwarded to local MQTT broker"
+    }

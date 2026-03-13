@@ -44,35 +44,49 @@ def on_message(client, userdata, msg):
     print(f"📥 Received {payload_str} on {topic}")
 
     try:
-        value = float(payload_str)
+        if topic.endswith("temperature") or topic.endswith("humidity") or topic.endswith("illuminance"):
+            value = float(payload_str)
 
-        # Update the specific field in our cache
-        if "temperature" in topic:
-            sensor_cache["temperature"] = value
-        elif "humidity" in topic:
-            sensor_cache["humidity"] = value
-        elif "illuminance" in topic:
-            sensor_cache["illuminance"] = int(value)
+            # Update the specific field in our cache
+            if "temperature" in topic:
+                sensor_cache["temperature"] = value
+            elif "humidity" in topic:
+                sensor_cache["humidity"] = value
+            elif "illuminance" in topic:
+                sensor_cache["illuminance"] = int(value)
 
-        # 3. Construct the shared Pydantic model
-        reading = SensorReading(
-            device_id="yolobit-living-room",
-            temperature=sensor_cache["temperature"],
-            humidity=sensor_cache["humidity"],
-            illuminance=sensor_cache["illuminance"],
-            timestamp=datetime.now(timezone.utc)
-        )
+            # 3. Construct the shared Pydantic model
+            reading = SensorReading(
+                device_id="yolobit-living-room",
+                temperature=sensor_cache["temperature"],
+                humidity=sensor_cache["humidity"],
+                illuminance=sensor_cache["illuminance"],
+                timestamp=datetime.now(timezone.utc)
+            )
+            
+            # 4. Forward to the FastAPI backend using the secret token
+            headers = {"Authorization": GATEWAY_SECRET_TOKEN}
+            
+            response = httpx.post(
+                BACKEND_URL, 
+                json=reading.model_dump(mode='json'),
+                headers=headers
+            )
+            response.raise_for_status()
+            print("✅ Data successfully forwarded to Backend.")
+        else:
+            print(f"📥 Gateway received local command: {topic} -> {state}")
+            topic_parts = topic.split("/")
+            if len(topic_parts) == 3:
+                _, device_type, room = topic_parts
         
-        # 4. Forward to the FastAPI backend using the secret token
-        headers = {"Authorization": GATEWAY_SECRET_TOKEN}
-        
-        response = httpx.post(
-            BACKEND_URL, 
-            json=reading.model_dump(mode='json'),
-            headers=headers
-        )
-        response.raise_for_status()
-        print("✅ Data successfully forwarded to Backend.")
+                # Construct the specific Adafruit Feed name dynamically!
+                # This means you must name your Adafruit feeds like: "light-bathroom", "light-livingroom"
+                adafruit_feed = f"{ADAFRUIT_USERNAME}/feeds/{device_type}-{room}"
+                
+                # Forward the command to the Yolo:Bit via Adafruit IO
+                client.publish(adafruit_feed, state)
+                print(f"✅ Gateway forwarded '{state}' to Adafruit Feed: {adafruit_feed}")
         
     except json.JSONDecodeError:
         print(f"⚠️ Could not decode JSON payload: {msg.payload}")
