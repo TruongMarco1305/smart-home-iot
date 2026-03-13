@@ -18,17 +18,16 @@ ADAFRUIT_KEY = os.getenv("ADAFRUIT_IO_KEY")
 MQTT_BROKER = os.getenv("MQTT_BROKER")
 MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
 BACKEND_URL = os.getenv("BACKEND_URL")
-
-# Let's assume your Yolo:Bit publishes a JSON string to a feed called 'sensor-data'
-# The feed path format in Adafruit IO is always: username/feeds/feed-name
-SENSOR_FEED = f"{ADAFRUIT_USERNAME}/feeds/sensor-data"
+GATEWAY_SECRET_TOKEN = os.getenv("GATEWAY_SECRET_TOKEN")
 
 # 2. Define MQTT Callbacks
 def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
         print(f"🌐 Connected to MQTT Broker: {MQTT_BROKER}")
         # Subscribe to the specific feed
-        client.subscribe(SENSOR_FEED)
+        client.subscribe(f"{ADAFRUIT_USERNAME}/feeds/temperature")
+        client.subscribe(f"{ADAFRUIT_USERNAME}/feeds/humidity")
+        client.subscribe(f"{ADAFRUIT_USERNAME}/feeds/illuminance")
         print(f"📡 Subscribed to feed: {SENSOR_FEED}")
     else:
         print(f"❌ Failed to connect. Code: {reason_code}")
@@ -36,14 +35,13 @@ def on_connect(client, userdata, flags, reason_code, properties):
 def on_message(client, userdata, msg):
     """Triggered every time the Yolo:Bit sends data to Adafruit IO."""
     print(f"📥 Message received on {msg.topic}")
-    
+    print(f"Raw payload: {msg.payload.decode()}")
     try:
-        # Assuming Yolo:Bit sends: {"temperature": 25, "humidity": 60, "illuminance": 300}
         payload = json.loads(msg.payload.decode())
         
         # 3. Construct the shared Pydantic model
         reading = SensorReading(
-            device_id="yolobit-living-room",
+            device_id="yolobit",
             temperature=payload.get("temperature", 0.0),
             humidity=payload.get("humidity", 0.0),
             illuminance=payload.get("illuminance", 0),
@@ -51,8 +49,7 @@ def on_message(client, userdata, msg):
         )
         
         # 4. Forward to the FastAPI backend using the secret token
-        # Note: In production, load the token from the gateway's .env file too!
-        headers = {"Authorization": "Bearer my_super_secret_team_token"}
+        headers = {"Authorization": GATEWAY_SECRET_TOKEN}
         
         response = httpx.post(
             BACKEND_URL, 
@@ -83,9 +80,7 @@ def main():
     client.on_message = on_message
     
     # Connect and start the loop
-    client.connect(MQTT_BROKER, MQTT_PORT, 60)
-    
-    # loop_forever() handles reconnects and blocks the thread to keep listening
+    client.connect(MQTT_BROKER, MQTT_PORT, 60)    
     client.loop_forever()
 
 if __name__ == "__main__":
