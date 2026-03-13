@@ -27,7 +27,7 @@ async def receive_sensor_data(
     # Require the secret token in the headers for security
     authorization: str = Header(None) 
 ):
-    if authorization != f"Bearer {settings.gateway_secret_token}":
+    if authorization != settings.gateway_secret_token:
         raise HTTPException(status_code=401, detail="Unauthorized Gateway")
 
     fake_database.append(reading)

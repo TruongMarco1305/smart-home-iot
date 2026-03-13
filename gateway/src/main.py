@@ -20,6 +20,12 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
 BACKEND_URL = os.getenv("BACKEND_URL")
 GATEWAY_SECRET_TOKEN = os.getenv("GATEWAY_SECRET_TOKEN")
 
+sensor_cache = {
+    "temperature": 0.0,
+    "humidity": 0.0,
+    "illuminance": 0
+}
+
 # 2. Define MQTT Callbacks
 def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
@@ -28,23 +34,32 @@ def on_connect(client, userdata, flags, reason_code, properties):
         client.subscribe(f"{ADAFRUIT_USERNAME}/feeds/temperature")
         client.subscribe(f"{ADAFRUIT_USERNAME}/feeds/humidity")
         client.subscribe(f"{ADAFRUIT_USERNAME}/feeds/illuminance")
-        print(f"📡 Subscribed to feed: {SENSOR_FEED}")
+        print(f"📡 Subscribed to feeds")
     else:
         print(f"❌ Failed to connect. Code: {reason_code}")
 
 def on_message(client, userdata, msg):
-    """Triggered every time the Yolo:Bit sends data to Adafruit IO."""
-    print(f"📥 Message received on {msg.topic}")
-    print(f"Raw payload: {msg.payload.decode()}")
+    topic = msg.topic
+    payload_str = msg.payload.decode()
+    print(f"📥 Received {payload_str} on {topic}")
+
     try:
-        payload = json.loads(msg.payload.decode())
-        
+        value = float(payload_str)
+
+        # Update the specific field in our cache
+        if "temperature" in topic:
+            sensor_cache["temperature"] = value
+        elif "humidity" in topic:
+            sensor_cache["humidity"] = value
+        elif "illuminance" in topic:
+            sensor_cache["illuminance"] = int(value)
+
         # 3. Construct the shared Pydantic model
         reading = SensorReading(
-            device_id="yolobit",
-            temperature=payload.get("temperature", 0.0),
-            humidity=payload.get("humidity", 0.0),
-            illuminance=payload.get("illuminance", 0),
+            device_id="yolobit-living-room",
+            temperature=sensor_cache["temperature"],
+            humidity=sensor_cache["humidity"],
+            illuminance=sensor_cache["illuminance"],
             timestamp=datetime.now(timezone.utc)
         )
         
