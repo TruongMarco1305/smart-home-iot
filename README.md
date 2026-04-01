@@ -20,20 +20,32 @@ A Python-based smart home system that connects physical sensors and actuators (v
 
 ```
 [Yolo:Bit Sensor]
-       │  MQTT over TLS
+       │  MQTT (Adafruit IO feeds)
        ▼
-[Adafruit IO Cloud]
-       │  MQTT Subscribe
+[Adafruit IO Cloud] ◄──── device commands (ON/OFF) published back
+       │  MQTT Subscribe (temperature / humidity / illuminance)
        ▼
-[Python IoT Gateway]  ──── HTTP POST (Bearer Token) ────▶  [FastAPI Backend]
-                                                                    │
-                                                               [Database]
+┌──────────────────────────────────────────────┐
+│           FastAPI Backend                    │
+│  ┌────────────────────────────────────────┐  │
+│  │  Embedded Gateway (src/core/gateway.py)│  │
+│  │  • paho MQTT client → Adafruit IO      │  │
+│  │  • sensor push loop (every 1 s → DB)   │  │
+│  │  • command drain loop (queue → MQTT)   │  │
+│  └────────────────────────────────────────┘  │
+│  REST API  •  SSE stream  •  Auth / RBAC     │
+└──────────────────┬───────────────────────────┘
+                   │
+              [MongoDB]
 ```
 
+**No external MQTT broker (Mosquitto) required.**
+
 **Data flow:**
-1. The **Yolo:Bit** microcontroller reads sensor data (temperature, humidity, illuminance) and publishes it as JSON to an **Adafruit IO** feed via MQTT.
-2. The **Python IoT Gateway** subscribes to the Adafruit IO feed, validates the payload using the shared Pydantic schema, and forwards it to the backend REST API.
-3. The **FastAPI Backend** authenticates the gateway via a secret bearer token, stores the readings, and serves data to client apps.
+1. The **Yolo:Bit** publishes sensor values to individual **Adafruit IO** MQTT feeds.
+2. The **embedded gateway** (`src/core/gateway.py`) subscribes to those feeds inside the FastAPI process, caches the latest values, and writes a snapshot to MongoDB every second.
+3. When a user sends a device command via the REST API, it is placed in an in-process `asyncio.Queue`. The command drain loop picks it up and publishes it directly to the correct Adafruit IO feed, which the Yolo:Bit receives.
+4. The frontend consumes live sensor data via an **SSE stream** (`GET /api/sensors/stream`).
 
 ---
 
@@ -41,19 +53,24 @@ A Python-based smart home system that connects physical sensors and actuators (v
 
 ```
 smart-home-iot/
-├── backend/            # FastAPI REST API server
-│   ├── main.py
+├── backend/                  # FastAPI backend (gateway embedded inside)
+│   ├── src/
+│   │   ├── core/
+│   │   │   ├── config.py     # All settings (pydantic-settings)
+│   │   │   ├── database.py   # Async Motor MongoDB client
+│   │   │   ├── gateway.py    # Embedded Adafruit IO MQTT client + tasks
+│   │   │   └── mqtt.py       # asyncio command queue bridge
+│   │   ├── auth/             # Login, JWT, RBAC dependencies
+│   │   ├── devices/          # Device CRUD + ON/OFF command endpoint
+│   │   ├── sensors/          # Latest reading, history, SSE stream
+│   │   ├── users/            # User management (admin)
+│   │   └── models/           # MongoDB document models
+│   ├── scripts/seed.py       # Creates default admin user
 │   ├── pyproject.toml
-│   └── README.md
-├── gateway/            # Python IoT gateway (MQTT → HTTP bridge)
-│   ├── main.py
-│   ├── pyproject.toml
-│   └── README.md
-├── shared_models/      # Shared Pydantic schemas used by both services
-│   ├── __init__.py
-│   └── schemas.py
-├── .python-version     # Python 3.12
-└── README.md
+│   └── .env
+├── gateway/                  # Standalone gateway (kept for reference / edge deploy)
+├── shared_models/            # Shared Pydantic schemas (SensorReading, DeviceCommand)
+└── docs/API.md               # Frontend integration guide
 ```
 
 ---
@@ -78,6 +95,9 @@ smart-home-iot/
 - [**uv**](https://github.com/astral-sh/uv) (recommended Python package manager)
 - Python 3.12+
 - An [Adafruit IO](https://io.adafruit.com/) account
+- MongoDB (local or Atlas)
+
+> **No Mosquitto or any other MQTT broker is needed** — the backend connects directly to Adafruit IO.
 
 ---
 
@@ -90,60 +110,53 @@ cd smart-home-iot
 
 ---
 
-### 2. Set up the Backend
+### 2. Configure the backend
 
 ```bash
 cd backend
+cp .env.example .env
 ```
 
-Create a `.env` file:
+Edit `.env`:
 
 ```env
 GATEWAY_SECRET_TOKEN=your_super_secret_token
-DEBUG_MODE=false
+DEBUG_MODE=True
+
+# MongoDB
+MONGODB_URL=mongodb://localhost:27017
+MONGODB_DB_NAME=smart_home
+
+# JWT — generate with: openssl rand -hex 32
+JWT_SECRET_KEY=your_random_secret
+
+# Adafruit IO
+ADAFRUIT_IO_USERNAME=your_adafruit_username
+ADAFRUIT_IO_KEY=your_adafruit_io_key
+ADAFRUIT_MQTT_BROKER=io.adafruit.com
+ADAFRUIT_MQTT_PORT=1883
 ```
-
-Install dependencies and run:
-
-```bash
-uv sync
-uv run uvicorn main:app --reload
-```
-
-The API will be available at `http://localhost:8000`.  
-Interactive docs: `http://localhost:8000/docs`
 
 ---
 
-### 3. Set up the Gateway
-
-```bash
-cd gateway
-```
-
-Create a `.env` file:
-
-```env
-ADAFRUIT_IO_USERNAME=your_adafruit_username
-ADAFRUIT_IO_KEY=your_adafruit_io_key
-MQTT_BROKER=io.adafruit.com
-MQTT_PORT=1883
-BACKEND_URL=http://localhost:8000/api/data
-GATEWAY_SECRET_TOKEN=your_super_secret_token
-```
-
-Install dependencies and run:
+### 3. Install dependencies, seed the DB, and run
 
 ```bash
 uv sync
-uv run python main.py
+uv run python scripts/seed.py   # creates admin / admin1234
+uv run uvicorn src.main:app --reload
 ```
+
+The API is available at `http://localhost:8000`.  
+Interactive docs: `http://localhost:8000/docs`
+
+On startup the backend automatically connects to Adafruit IO and begins receiving sensor data. No separate gateway process is required.
 
 ---
 
 ### 4. Shared Models
 
-The `shared_models/` package is a local dependency shared between the backend and gateway. It defines the core `SensorReading` schema:
+`shared_models/` contains Pydantic schemas shared across the project:
 
 ```python
 class SensorReading(BaseModel):
@@ -152,9 +165,13 @@ class SensorReading(BaseModel):
     humidity: float
     illuminance: int
     timestamp: datetime
-```
 
-No installation is required — both services reference it directly via a relative `sys.path` import.
+class DeviceCommand(BaseModel):
+    device_id: str
+    device_type: Literal["light", "pump"]
+    room: str
+    state: Literal["ON", "OFF"]
+```
 
 ---
 

@@ -1,52 +1,100 @@
-# backend/src/main.py
-from fastapi import FastAPI, HTTPException, Header
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from contextlib import asynccontextmanager
 import sys
 import os
+
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
+from src.auth.router import router as auth_router
+from src.core.config import settings
+from src.core.database import close_db, connect_db, get_database
+from src.core.gateway import start_gateway, stop_gateway
+from src.devices.router import router as devices_router
+from src.sensors.router import router as sensors_router
+from src.users.router import router as users_router
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from shared_models.schemas import SensorReading
 
-# 1. Define your environment variables schema
-class Settings(BaseSettings):
-    gateway_secret_token: str
-    debug_mode: bool = False
-    
-    # Tells Pydantic to read from the .env file in the current directory
-    model_config = SettingsConfigDict(env_file=".env")
+# ---------------------------------------------------------------------------
+# App lifespan
+# ---------------------------------------------------------------------------
 
-# 2. Instantiate the settings
-settings = Settings()
-server_mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="fastapi-backend")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- Startup ---
+    await connect_db()
+    await _ensure_indexes()
+    await start_gateway()
+    yield
+    # --- Shutdown ---
+    await stop_gateway()
+    await close_db()
 
-app = FastAPI(title="Smart Home API")
-fake_database = []
 
-@app.on_event("startup")
-def startup_event():
-    server_mqtt.connect("localhost", 1883, 60)
-    server_mqtt.loop_start()
+async def _ensure_indexes():
+    db = get_database()
+    await db["users"].create_index("username", unique=True)
+    await db["users"].create_index("email", unique=True)
+    await db["devices"].create_index("adafruit_feed", unique=True)
+    # TTL index: auto-delete sensor readings older than 7 days
+    await db["sensor_readings"].create_index(
+        "timestamp", expireAfterSeconds=7 * 24 * 3600
+    )
 
-@app.post("/api/data")
+
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
+
+app = FastAPI(
+    title="Smart Home API",
+    description=(
+        "IoT Smart Home — login, real-time sensor monitoring via SSE, "
+        "and light/pump device control."
+    ),
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],   # tighten in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------------------------------------------------------------------------
+# Routers
+# ---------------------------------------------------------------------------
+
+app.include_router(auth_router,    prefix="/api")
+app.include_router(users_router,   prefix="/api")
+app.include_router(devices_router, prefix="/api")
+app.include_router(sensors_router, prefix="/api")
+
+
+# ---------------------------------------------------------------------------
+# Gateway ingestion endpoint
+# ---------------------------------------------------------------------------
+
+@app.post("/api/data", tags=["Gateway"], include_in_schema=False)
 async def receive_sensor_data(
-    reading: SensorReading, 
-    # Require the secret token in the headers for security
-    authorization: str = Header(None) 
+    reading: SensorReading,
+    authorization: str = Header(None),
 ):
-    if authorization != settings.gateway_secret_token:
+    """
+    Called every second by the IoT gateway.
+    Validates the shared secret, then persists the reading to MongoDB.
+    """
+    if authorization != f"Bearer {settings.gateway_secret_token}":
         raise HTTPException(status_code=401, detail="Unauthorized Gateway")
 
-    fake_database.append(reading)
-    print(f"✅ Received real data: Temp = {reading.temperature}°C")
-    
+    db = get_database()
+    await db["sensor_readings"].insert_one(reading.model_dump())
+    print(
+        f"✅ Stored: T={reading.temperature}°C  "
+        f"H={reading.humidity}%  Lux={reading.illuminance}"
+    )
     return {"status": "success"}
-
-@app.post("/api/command")
-async def send_device_command(command: DeviceCommand):
-    mqtt_topic = f"commands/{command.device_type}/{command.room}"
-    server_mqtt.publish(mqtt_topic, command.state)
-    print(f"📤 Sent command: {command.device_type} in {command.room} -> {command.state}")
-    return {
-        "status": "success", 
-        "message": "Command forwarded to local MQTT broker"
-    }
