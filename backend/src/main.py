@@ -93,8 +93,4 @@ async def receive_sensor_data(
 
     db = get_database()
     await db["sensor_readings"].insert_one(reading.model_dump())
-    print(
-        f"✅ Stored: T={reading.temperature}°C  "
-        f"H={reading.humidity}%  Lux={reading.illuminance}"
-    )
     return {"status": "success"}
