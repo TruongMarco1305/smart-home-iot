@@ -58,8 +58,10 @@ class Gateway:
             "humidity":    None,
             "illuminance": None,
         }
-        # Timestamp of the most recent _on_message call (from the paho thread).
-        # The push loop only persists when this is newer than _last_saved.
+        # Tracks which feeds have sent a new value since the last DB save.
+        # _cache_updated_at is only stamped once all three feeds have reported,
+        # so the push loop never fires mid-batch (avoids duplicate documents).
+        self._feeds_pending: set = set()
         self._cache_updated_at: datetime | None = None
         self._last_saved:       datetime | None = None
         self._client: mqtt.Client | None = None
@@ -111,12 +113,19 @@ class Gateway:
             value = float(payload)
             if topic == self._temp_feed():
                 self._sensor_cache["temperature"] = value
+                self._feeds_pending.add("temperature")
             elif topic == self._humidity_feed():
                 self._sensor_cache["humidity"] = value
+                self._feeds_pending.add("humidity")
             elif topic == self._illuminance_feed():
                 self._sensor_cache["illuminance"] = int(value)
-            # Mark cache as freshly updated so the push loop knows to save it
-            self._cache_updated_at = datetime.now(timezone.utc)
+                self._feeds_pending.add("illuminance")
+            # Only mark the cache as ready to save once ALL three feeds
+            # have delivered a new value — prevents saving a partial batch
+            # and creating duplicate documents per Adafruit reading cycle.
+            if self._feeds_pending >= {"temperature", "humidity", "illuminance"}:
+                self._cache_updated_at = datetime.now(timezone.utc)
+                self._feeds_pending.clear()
             print(
                 f"📥 Adafruit [{topic.split('/')[-1]}] = {value}  "
                 f"(T={self._sensor_cache['temperature']}  "

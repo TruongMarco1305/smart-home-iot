@@ -23,16 +23,26 @@ class Settings(BaseSettings):
     adafruit_mqtt_port: int = 1883
 
     # --- CORS ---
-    # Comma-separated list, e.g. "https://myapp.web.app,https://myapp.firebaseapp.com"
-    # Defaults to * for local dev; always set explicitly in production.
-    cors_origins: str = "*"
+    # Comma-separated list of allowed origins.
+    # e.g. "https://myapp.web.app,https://myapp.firebaseapp.com"
+    # Localhost origins are always included so local dev works against any backend.
+    cors_origins: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     def get_cors_origins(self) -> list[str]:
-        if self.cors_origins.strip() == "*":
-            return ["*"]
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        # Localhost origins are always allowed (needed for local dev hitting production).
+        always_allowed = [
+            "http://localhost:5173",
+            "http://localhost:3000",
+            "http://127.0.0.1:5173",
+            "https://smart-iot-1234.web.app",
+        ]
+        if not self.cors_origins.strip():
+            return always_allowed
+        explicit = [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        # Merge without duplicates, preserving order
+        return list(dict.fromkeys(explicit + always_allowed))
 
 
 @lru_cache(maxsize=1)
