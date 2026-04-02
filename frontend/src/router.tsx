@@ -10,6 +10,7 @@ import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DevicesPage } from './pages/DevicesPage';
+import { FeedsPage } from './pages/FeedsPage';
 import { SensorsPage } from './pages/SensorsPage';
 import { UsersPage } from './pages/UsersPage';
 
@@ -79,6 +80,19 @@ const usersRoute = createRoute({
   component: UsersPage,
 });
 
+const feedsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/feeds',
+  beforeLoad: () => {
+    requireAuth();
+    const role = useAuthStore.getState().user?.role;
+    if (role !== 'admin') {
+      throw redirect({ to: '/dashboard' });
+    }
+  },
+  component: FeedsPage,
+});
+
 // ── Router ────────────────────────────────────────────────────────────────────
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -87,6 +101,7 @@ const routeTree = rootRoute.addChildren([
   devicesRoute,
   sensorsRoute,
   usersRoute,
+  feedsRoute,
 ]);
 
 export const router = createRouter({ routeTree });

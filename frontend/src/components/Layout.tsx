@@ -4,6 +4,7 @@ import {
   Cpu,
   BarChart2,
   Users,
+  Rss,
   LogOut,
   Wifi,
   WifiOff,
@@ -15,9 +16,10 @@ import FireAlertModal from './FireAlertModal';
 
 const navItems = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/devices', label: 'Devices', icon: Cpu },
-  { to: '/sensors', label: 'Sensors', icon: BarChart2 },
-  { to: '/users', label: 'Users', icon: Users, adminOnly: true },
+  { to: '/devices',   label: 'Devices',   icon: Cpu },
+  { to: '/sensors',   label: 'Sensors',   icon: BarChart2 },
+  { to: '/feeds',     label: 'Feeds',     icon: Rss,           adminOnly: true },
+  { to: '/users',     label: 'Users',     icon: Users,         adminOnly: true },
 ];
 
 export function Layout() {

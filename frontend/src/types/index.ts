@@ -68,6 +68,18 @@ export interface CreateDevicePayload {
   adafruit_feed: string;
 }
 
+export interface Feed {
+  id: string;
+  key: string;
+  label: string;
+  created_at: string;
+}
+
+export interface CreateFeedPayload {
+  key: string;
+  label: string;
+}
+
 export interface ApiError {
   detail: string | { loc: string[]; msg: string; type: string }[];
 }

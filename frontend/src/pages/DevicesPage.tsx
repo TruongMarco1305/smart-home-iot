@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Sun, Droplets, Power, Wifi, WifiOff } from 'lucide-react';
 import { devicesApi } from '../api/devices';
+import { feedsApi } from '../api/feeds';
 import { useAuthStore } from '../stores/authStore';
 import type { Device, CreateDevicePayload, DeviceType } from '../types';
 
@@ -80,6 +81,11 @@ function RegisterDeviceModal({ onClose }: { onClose: () => void }) {
   });
   const [error, setError] = useState('');
 
+  const { data: feeds = [], isLoading: feedsLoading } = useQuery({
+    queryKey: ['feeds'],
+    queryFn: feedsApi.list,
+  });
+
   const { mutate, isPending } = useMutation({
     mutationFn: devicesApi.create,
     onSuccess: () => {
@@ -112,25 +118,35 @@ function RegisterDeviceModal({ onClose }: { onClose: () => void }) {
             </p>
           )}
 
-          {[
-            { label: 'Device name', key: 'name' as const, placeholder: 'Living Room Light' },
-            { label: 'Room', key: 'room' as const, placeholder: 'livingroom' },
-            { label: 'Adafruit feed key', key: 'adafruit_feed' as const, placeholder: 'light-livingroom' },
-          ].map(({ label, key, placeholder }) => (
-            <div key={key} className="space-y-1">
-              <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide">
-                {label}
-              </label>
-              <input
-                value={form[key]}
-                onChange={(e) => set(key, e.target.value)}
-                placeholder={placeholder}
-                required
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-          ))}
+          {/* Device name */}
+          <div className="space-y-1">
+            <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide">
+              Device name
+            </label>
+            <input
+              value={form.name}
+              onChange={(e) => set('name', e.target.value)}
+              placeholder="Living Room Light"
+              required
+              className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
 
+          {/* Room */}
+          <div className="space-y-1">
+            <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide">
+              Room
+            </label>
+            <input
+              value={form.room}
+              onChange={(e) => set('room', e.target.value)}
+              placeholder="livingroom"
+              required
+              className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+
+          {/* Type */}
           <div className="space-y-1">
             <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide">
               Type
@@ -145,6 +161,34 @@ function RegisterDeviceModal({ onClose }: { onClose: () => void }) {
             </select>
           </div>
 
+          {/* Adafruit feed — dropdown from the feeds collection */}
+          <div className="space-y-1">
+            <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide">
+              Adafruit feed
+            </label>
+            {feedsLoading ? (
+              <p className="text-xs text-slate-500 py-2">Loading feeds…</p>
+            ) : feeds.length === 0 ? (
+              <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                No feeds registered yet. Go to <span className="font-semibold">Feeds</span> in the sidebar to add one first.
+              </p>
+            ) : (
+              <select
+                value={form.adafruit_feed}
+                onChange={(e) => set('adafruit_feed', e.target.value)}
+                required
+                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="" disabled>Select a feed…</option>
+                {feeds.map((f) => (
+                  <option key={f.id} value={f.key}>
+                    {f.label} ({f.key})
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
           <div className="flex gap-3 pt-2">
             <button
               type="button"
@@ -155,7 +199,7 @@ function RegisterDeviceModal({ onClose }: { onClose: () => void }) {
             </button>
             <button
               type="submit"
-              disabled={isPending}
+              disabled={isPending || feeds.length === 0}
               className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg py-2.5 text-sm font-semibold transition-colors"
             >
               {isPending ? 'Registering…' : 'Register'}
