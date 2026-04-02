@@ -6,8 +6,7 @@ services:
     plan: free
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    # $PORT is injected by Render at runtime; the Procfile picks it up correctly.
-    # Do NOT hardcode the port here — let the Procfile handle it.
+    startCommand: uvicorn src.main:app --host 0.0.0.0 --port $PORT --workers 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
