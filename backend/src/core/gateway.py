@@ -161,12 +161,6 @@ class Gateway:
                     "timestamp":   datetime.now(timezone.utc),
                 }
                 await db_manager.database["sensor_readings"].insert_one(doc)
-                print(
-                    f"✅ Stored sensor: "
-                    f"T={doc['temperature']}°C  "
-                    f"H={doc['humidity']}%  "
-                    f"Lux={doc['illuminance']}"
-                )
                 # Notify all observers (SSE broadcaster, etc.)
                 await event_bus.notify(doc)
             except asyncio.CancelledError:
@@ -356,12 +350,6 @@ async def _sensor_push_loop() -> None:
                 "timestamp": datetime.now(timezone.utc),
             }
             await db["sensor_readings"].insert_one(doc)
-            print(
-                f"✅ Stored sensor: "
-                f"T={doc['temperature']}°C  "
-                f"H={doc['humidity']}%  "
-                f"Lux={doc['illuminance']}"
-            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
