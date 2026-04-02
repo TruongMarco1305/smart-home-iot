@@ -26,6 +26,7 @@ async def lifespan(app: FastAPI):
     # --- Startup ---
     await connect_db()
     await _ensure_indexes()
+    await _migrate_admin_is_collect()
     await start_gateway()
     yield
     # --- Shutdown ---
@@ -41,6 +42,15 @@ async def _ensure_indexes():
     # TTL index: auto-delete sensor readings older than 7 days
     await db["sensor_readings"].create_index(
         "timestamp", expireAfterSeconds=7 * 24 * 3600
+    )
+
+
+async def _migrate_admin_is_collect():
+    """Ensure the root admin document has the is_collect field (idempotent)."""
+    db = get_database()
+    await db["users"].update_one(
+        {"username": "admin", "is_collect": {"$exists": False}},
+        {"$set": {"is_collect": False}},
     )
 
 

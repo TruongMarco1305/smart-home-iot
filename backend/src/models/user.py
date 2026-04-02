@@ -45,6 +45,9 @@ class UserDocument(BaseModel):
 
     role: Role = Role.VIEWER
     is_active: bool = True
+    # Only present on the root admin account; controls whether the gateway
+    # persists sensor readings to MongoDB.
+    is_collect: bool | None = None
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

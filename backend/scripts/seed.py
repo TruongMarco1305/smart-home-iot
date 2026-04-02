@@ -39,6 +39,7 @@ async def seed():
             "hashed_password": hash_password(DEFAULT_ADMIN["password"]),
             "role": "admin",
             "is_active": True,
+            "is_collect": False,
             "created_at": now,
             "updated_at": now,
         }

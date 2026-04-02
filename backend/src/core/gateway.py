@@ -58,24 +58,6 @@ class Gateway:
         }
         self._client: mqtt.Client | None = None
         self._tasks: list[asyncio.Task] = []
-        # Data collection is OFF by default — admin must explicitly start it.
-        self._collecting: bool = False
-
-    # ------------------------------------------------------------------ #
-    # Collection control                                                   #
-    # ------------------------------------------------------------------ #
-
-    @property
-    def collecting(self) -> bool:
-        return self._collecting
-
-    def start_collection(self) -> None:
-        self._collecting = True
-        print("▶️  Data collection STARTED")
-
-    def stop_collection(self) -> None:
-        self._collecting = False
-        print("⏸️  Data collection PAUSED")
 
     # ------------------------------------------------------------------ #
     # Singleton accessor                                                   #
@@ -142,17 +124,21 @@ class Gateway:
 
     async def _sensor_push_loop(self) -> None:
         """
-        Every second: persist a snapshot to MongoDB, then notify all
-        SensorEventBus observers (SSE clients, future alerting hooks, etc.).
+        Every second: check the root admin's is_collect flag in MongoDB,
+        then persist + notify observers only when collection is enabled.
         """
         db_manager = DatabaseManager.get_instance()
         event_bus  = SensorEventBus.get_instance()
 
         while True:
             await asyncio.sleep(1)
-            if not self._collecting:
-                continue
             try:
+                # Read collection flag from the root admin document
+                admin_doc = await db_manager.database["users"].find_one(
+                    {"username": "admin"}, {"is_collect": 1}
+                )
+                if not (admin_doc and admin_doc.get("is_collect")):
+                    continue
                 doc = {
                     "device_id":   "yolobit-living-room",
                     "temperature": self._sensor_cache["temperature"],
