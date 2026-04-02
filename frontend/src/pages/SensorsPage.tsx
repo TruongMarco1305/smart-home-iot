@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   LineChart,
@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { sensorsApi } from '../api/sensors';
 import { useSensorStore } from '../stores/sensorStore';
+import { useSensorStream } from '../hooks/useSensorStream';
 import type { SensorReading } from '../types';
 
 type Metric = 'temperature' | 'humidity' | 'illuminance';
@@ -22,63 +23,90 @@ const METRICS: { key: Metric; label: string; unit: string; color: string }[] = [
   { key: 'illuminance', label: 'Illuminance', unit: 'lux', color: '#facc15' },
 ];
 
-function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
+const MAX_POINTS = 120; // keep last 2 minutes at 1 reading/s
 
-function chartData(readings: SensorReading[]) {
-  return [...readings].reverse().map((r) => ({
-    time: formatTime(r.timestamp),
+function toChartPoint(r: SensorReading) {
+  return {
+    time: new Date(r.timestamp).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }),
     temperature: +r.temperature.toFixed(1),
     humidity: +r.humidity.toFixed(1),
     illuminance: r.illuminance,
-  }));
+  };
 }
 
 export function SensorsPage() {
+  // Keep the SSE stream alive while on this page
+  useSensorStream();
+
   const latest = useSensorStore((s) => s.latest);
-  const [page, setPage] = useState(1);
-  const limit = 100;
+
+  // Rolling buffer of chart points — updated in real-time from the SSE store
+  const bufferRef = useRef<ReturnType<typeof toChartPoint>[]>([]);
+  const [chartPoints, setChartPoints] = useState<ReturnType<typeof toChartPoint>[]>([]);
+
+  // Seed from history on first load
+  const { data: history } = useQuery({
+    queryKey: ['sensors', 'history', 1],
+    queryFn: () => sensorsApi.history(1, MAX_POINTS),
+    staleTime: Infinity, // only fetch once; live updates come from SSE
+  });
+
+  useEffect(() => {
+    if (!history) return;
+    // history is newest-first; reverse to oldest-first for the chart
+    bufferRef.current = [...history.data].reverse().map(toChartPoint);
+    setChartPoints([...bufferRef.current]);
+  }, [history]);
+
+  // Append every new SSE reading to the rolling buffer
+  useEffect(() => {
+    if (!latest) return;
+    bufferRef.current = [
+      ...bufferRef.current.slice(-(MAX_POINTS - 1)),
+      toChartPoint(latest),
+    ];
+    setChartPoints([...bufferRef.current]);
+  }, [latest]);
+
   const [activeMetrics, setActiveMetrics] = useState<Set<Metric>>(
     new Set(['temperature', 'humidity', 'illuminance']),
   );
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['sensors', 'history', page],
-    queryFn: () => sensorsApi.history(page, limit),
-    placeholderData: (prev) => prev,
-  });
-
-  const totalPages = data ? Math.ceil(data.total / limit) : 1;
-  const chart = data ? chartData(data.data) : [];
-
-  const toggleMetric = (key: Metric) => {
+  const toggleMetric = (key: Metric) =>
     setActiveMetrics((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) { next.delete(key); } else { next.add(key); }
+      next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
-  };
 
   return (
     <div className="p-8 max-w-6xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Sensor History</h1>
-        <p className="text-sm text-slate-400 mt-0.5">
-          {data ? `${data.total.toLocaleString()} readings stored` : 'Loading…'}
-        </p>
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Sensor History</h1>
+          <p className="text-sm text-slate-400 mt-0.5">
+            {history ? `${history.total.toLocaleString()} readings stored` : 'Loading…'}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-400">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          Live
+        </div>
       </div>
 
-      {/* Live snapshot */}
+      {/* Live snapshot cards */}
       {latest && (
         <div className="grid grid-cols-3 gap-4">
           {METRICS.map(({ key, label, unit, color }) => (
             <div key={key} className="bg-slate-800 rounded-2xl p-4 text-center">
               <p className="text-xs text-slate-400 uppercase tracking-wide">{label}</p>
               <p className="text-3xl font-bold mt-1" style={{ color }}>
-                {key === 'illuminance'
-                  ? latest[key]
-                  : (+latest[key].toFixed(1))}
+                {key === 'illuminance' ? latest[key] : +latest[key].toFixed(1)}
                 <span className="text-base font-normal text-slate-400 ml-1">{unit}</span>
               </p>
               <p className="text-xs text-slate-600 mt-1">live</p>
@@ -110,13 +138,16 @@ export function SensorsPage() {
 
       {/* Chart */}
       <div className="bg-slate-800 rounded-2xl p-6">
-        {isLoading ? (
-          <div className="h-64 flex items-center justify-center text-slate-400 text-sm">
-            Loading chart…
+        {chartPoints.length === 0 ? (
+          <div className="h-72 flex items-center justify-center text-slate-400 text-sm">
+            Waiting for data…
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={chart} margin={{ top: 4, right: 4, bottom: 4, left: 0 }}>
+          <ResponsiveContainer width="100%" height={360}>
+            <LineChart
+              data={chartPoints}
+              margin={{ top: 4, right: 8, bottom: 4, left: 0 }}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
               <XAxis
                 dataKey="time"
@@ -124,7 +155,11 @@ export function SensorsPage() {
                 interval="preserveStartEnd"
                 tickLine={false}
               />
-              <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} tickLine={false} axisLine={false} />
+              <YAxis
+                tick={{ fill: '#94a3b8', fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+              />
               <Tooltip
                 contentStyle={{
                   background: '#1e293b',
@@ -152,62 +187,6 @@ export function SensorsPage() {
             </LineChart>
           </ResponsiveContainer>
         )}
-      </div>
-
-      {/* Table */}
-      <div className="bg-slate-800 rounded-2xl overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-700">
-              {['Timestamp', 'Temp (°C)', 'Humidity (%)', 'Illuminance (lux)'].map((h) => (
-                <th
-                  key={h}
-                  className="text-left px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide"
-                >
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {(data?.data ?? []).map((r) => (
-              <tr
-                key={r._id}
-                className="border-b border-slate-700/50 hover:bg-slate-700/30 transition-colors"
-              >
-                <td className="px-5 py-3 text-slate-300 font-mono text-xs">
-                  {new Date(r.timestamp).toLocaleString()}
-                </td>
-                <td className="px-5 py-3 text-orange-400">{r.temperature.toFixed(1)}</td>
-                <td className="px-5 py-3 text-sky-400">{r.humidity.toFixed(1)}</td>
-                <td className="px-5 py-3 text-yellow-400">{r.illuminance}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {/* Pagination */}
-        <div className="flex items-center justify-between px-5 py-3 border-t border-slate-700">
-          <span className="text-xs text-slate-500">
-            Page {page} of {totalPages}
-          </span>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-              className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-slate-300 rounded-lg transition-colors"
-            >
-              Previous
-            </button>
-            <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-              className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-slate-300 rounded-lg transition-colors"
-            >
-              Next
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );

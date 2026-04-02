@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
 import { useSensorStore } from '../stores/sensorStore';
+import { useFireAlert } from '../hooks/useFireAlert';
+import FireAlertModal from './FireAlertModal';
 
 const navItems = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -23,6 +25,9 @@ export function Layout() {
   const isConnected = useSensorStore((s) => s.isConnected);
   const pathname = useLocation({ select: (l) => l.pathname });
   const isLoginPage = pathname === '/login';
+
+  // Open alert SSE connection for the lifetime of the authenticated session
+  useFireAlert();
 
   if (isLoginPage || !user) {
     return <Outlet />;
@@ -89,6 +94,9 @@ export function Layout() {
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
+
+      {/* Fire / environment alert overlay — rendered above everything */}
+      <FireAlertModal />
     </div>
   );
 }

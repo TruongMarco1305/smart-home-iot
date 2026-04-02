@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from src.models.user import Role
 
 
@@ -18,9 +18,11 @@ class TokenResponse(BaseModel):
 
 class UserPublic(BaseModel):
     """Safe user representation returned to clients (no password hash)."""
+    model_config = {"use_enum_values": True}
+
     id: str
     username: str
-    email: EmailStr
+    email: str
     role: Role
     is_active: bool
 

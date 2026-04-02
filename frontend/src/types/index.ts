@@ -71,3 +71,15 @@ export interface CreateDevicePayload {
 export interface ApiError {
   detail: string | { loc: string[]; msg: string; type: string }[];
 }
+
+export type AlertLevel = 'fire' | 'high_temp' | 'high_light';
+
+export interface AlertPayload {
+  level: AlertLevel;
+  message: string;
+  temperature: number;
+  humidity: number;
+  illuminance: number;
+  device_id: string;
+  timestamp: string;
+}

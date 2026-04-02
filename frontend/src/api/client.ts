@@ -1,8 +1,12 @@
 import axios from 'axios';
 import { useAuthStore } from '../stores/authStore';
 
+// In dev, VITE_API_BASE_URL is not set → baseURL is '/api' (proxied by Vite).
+// In production (Firebase), VITE_API_BASE_URL = 'https://<render-app>.onrender.com'
+const API_ORIGIN = import.meta.env.VITE_API_BASE_URL ?? '';
+
 export const apiClient = axios.create({
-  baseURL: '/api',
+  baseURL: `${API_ORIGIN}/api`,
   headers: { 'Content-Type': 'application/json' },
 });
 

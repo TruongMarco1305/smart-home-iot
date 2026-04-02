@@ -22,15 +22,16 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 # --- JWT ----------------------------------------------------------------------
 
-def create_access_token(user_id: str, username: str, role: Role) -> str:
+def create_access_token(user_id: str, username: str, role: Role | str) -> str:
     """Create a signed JWT that expires after ACCESS_TOKEN_EXPIRE_MINUTES."""
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=settings.access_token_expire_minutes
     )
+    role_value = role.value if isinstance(role, Role) else str(role)
     payload = {
         "sub": user_id,
         "username": username,
-        "role": role.value,
+        "role": role_value,
         "exp": expire,
     }
     return jwt.encode(
