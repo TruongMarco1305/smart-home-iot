@@ -93,7 +93,10 @@ class Gateway:
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties):
         if reason_code != 0:
-            print(f"⚠️  Adafruit IO disconnected unexpectedly (code={reason_code}). Paho will retry…")
+            print(
+                f"⚠️  Adafruit IO disconnected (code={reason_code}). "
+                "Paho auto-reconnect active — will retry in 2–30 s…"
+            )
 
     def _on_message(self, client, userdata, msg):
         topic   = msg.topic
@@ -190,10 +193,13 @@ class Gateway:
         self._client.on_connect    = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message    = self._on_message
+        # keepalive=30 beats Render's 55 s NAT/LB idle-connection timeout.
+        # reconnect_delay_set: wait 2 s, back off up to 30 s between retries.
+        self._client.reconnect_delay_set(min_delay=2, max_delay=30)
         self._client.connect_async(
             settings.adafruit_mqtt_broker,
             settings.adafruit_mqtt_port,
-            keepalive=60,
+            keepalive=30,
         )
         self._client.loop_start()  # non-blocking paho thread
 
