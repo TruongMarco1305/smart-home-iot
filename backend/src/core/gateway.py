@@ -204,24 +204,31 @@ class Gateway:
         # Initialise the command queue (must happen inside the running event loop)
         CommandQueue.get_instance().init()
 
-        # Build and connect the paho client
+        # Build and connect the paho client.
+        # Use a unique client_id per process run to avoid Adafruit IO's
+        # "duplicate client" kick: if two sessions share the same id, the
+        # broker immediately disconnects the older one, causing a reconnect
+        # storm that burns through the free-tier 30-connections/min limit.
+        client_id = f"smarthome-{uuid.uuid4().hex[:12]}"
         self._client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
-            client_id="smarthome-backend",
+            client_id=client_id,
         )
         self._client.username_pw_set(settings.adafruit_io_username, settings.adafruit_io_key)
         self._client.on_connect    = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message    = self._on_message
-        # keepalive=30 beats Render's 55 s NAT/LB idle-connection timeout.
-        # reconnect_delay_set: wait 2 s, back off up to 30 s between retries.
-        self._client.reconnect_delay_set(min_delay=2, max_delay=30)
+        # keepalive=30 stays under Render's ~55 s NAT idle timeout.
+        # reconnect backoff: start at 5 s, cap at 120 s — avoids hammering
+        # Adafruit IO (free tier: max 30 new connections per minute).
+        self._client.reconnect_delay_set(min_delay=5, max_delay=120)
         self._client.connect_async(
             settings.adafruit_mqtt_broker,
             settings.adafruit_mqtt_port,
             keepalive=30,
         )
         self._client.loop_start()  # non-blocking paho thread
+        print(f"🔌 MQTT client_id: {client_id}")
 
         # Launch asyncio background tasks
         self._tasks.append(asyncio.create_task(self._sensor_push_loop(),   name="sensor-push"))
