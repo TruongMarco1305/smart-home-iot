@@ -58,6 +58,24 @@ class Gateway:
         }
         self._client: mqtt.Client | None = None
         self._tasks: list[asyncio.Task] = []
+        # Data collection is OFF by default — admin must explicitly start it.
+        self._collecting: bool = False
+
+    # ------------------------------------------------------------------ #
+    # Collection control                                                   #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def collecting(self) -> bool:
+        return self._collecting
+
+    def start_collection(self) -> None:
+        self._collecting = True
+        print("▶️  Data collection STARTED")
+
+    def stop_collection(self) -> None:
+        self._collecting = False
+        print("⏸️  Data collection PAUSED")
 
     # ------------------------------------------------------------------ #
     # Singleton accessor                                                   #
@@ -132,6 +150,8 @@ class Gateway:
 
         while True:
             await asyncio.sleep(1)
+            if not self._collecting:
+                continue
             try:
                 doc = {
                     "device_id":   "yolobit-living-room",

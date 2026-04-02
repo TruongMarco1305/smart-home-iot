@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   LineChart,
   Line,
@@ -11,8 +11,10 @@ import {
   Legend,
 } from 'recharts';
 import { sensorsApi } from '../api/sensors';
+import { gatewayApi } from '../api/gateway';
 import { useSensorStore } from '../stores/sensorStore';
 import { useSensorStream } from '../hooks/useSensorStream';
+import { useAuthStore } from '../stores/authStore';
 import type { SensorReading } from '../types';
 
 type Metric = 'temperature' | 'humidity' | 'illuminance';
@@ -42,7 +44,26 @@ export function SensorsPage() {
   // Keep the SSE stream alive while on this page
   useSensorStream();
 
+  const role = useAuthStore((s) => s.user?.role);
+  const isAdmin = role === 'admin';
+  const queryClient = useQueryClient();
+
   const latest = useSensorStore((s) => s.latest);
+
+  // Collection status (admin only — non-admins simply don't see the control)
+  const { data: collectionData } = useQuery({
+    queryKey: ['gateway', 'collection'],
+    queryFn: gatewayApi.getCollectionStatus,
+    enabled: isAdmin,
+    refetchInterval: 10_000,
+  });
+  const collecting = collectionData?.collecting ?? false;
+
+  const toggleMutation = useMutation({
+    mutationFn: (next: boolean) => gatewayApi.setCollectionStatus(next),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ['gateway', 'collection'] }),
+  });
 
   // Rolling buffer of chart points — updated in real-time from the SSE store
   const bufferRef = useRef<ReturnType<typeof toChartPoint>[]>([]);
@@ -79,7 +100,11 @@ export function SensorsPage() {
   const toggleMetric = (key: Metric) =>
     setActiveMetrics((prev) => {
       const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
       return next;
     });
 
@@ -93,9 +118,35 @@ export function SensorsPage() {
             {history ? `${history.total.toLocaleString()} readings stored` : 'Loading…'}
           </p>
         </div>
-        <div className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-400">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          Live
+
+        <div className="flex items-center gap-3">
+          {/* Live indicator */}
+          <div className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            Live
+          </div>
+
+          {/* Collection toggle — admin only */}
+          {isAdmin && (
+            <button
+              onClick={() => toggleMutation.mutate(!collecting)}
+              disabled={toggleMutation.isPending}
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                collecting
+                  ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25 border border-red-500/40'
+                  : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 border border-emerald-500/40'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                collecting ? 'bg-red-400 animate-pulse' : 'bg-slate-500'
+              }`} />
+              {toggleMutation.isPending
+                ? 'Updating…'
+                : collecting
+                ? 'Stop Collection'
+                : 'Start Collection'}
+            </button>
+          )}
         </div>
       </div>
 

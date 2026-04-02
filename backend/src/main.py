@@ -10,6 +10,7 @@ from src.core.config import settings
 from src.core.database import close_db, connect_db, get_database
 from src.core.gateway import start_gateway, stop_gateway
 from src.devices.router import router as devices_router
+from src.gateway.router import router as gateway_router
 from src.sensors.router import router as sensors_router
 from src.users.router import router as users_router
 
@@ -73,6 +74,7 @@ app.include_router(auth_router,    prefix="/api")
 app.include_router(users_router,   prefix="/api")
 app.include_router(devices_router, prefix="/api")
 app.include_router(sensors_router, prefix="/api")
+app.include_router(gateway_router, prefix="/api")
 
 
 # ---------------------------------------------------------------------------
