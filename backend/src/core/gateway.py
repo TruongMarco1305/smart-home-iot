@@ -66,6 +66,8 @@ class Gateway:
         self._last_saved:       datetime | None = None
         self._client: mqtt.Client | None = None
         self._tasks: list[asyncio.Task] = []
+        # Captured in start() — used by the paho thread to schedule coroutines
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     # ------------------------------------------------------------------ #
     # Singleton accessor                                                   #
@@ -115,12 +117,13 @@ class Gateway:
         # ── Fire-alert feed (payload is a plain string, not a number) ──
         if topic == self._fire_alert_feed():
             print(f"🚨 Fire-alert signal received: {payload!r}")
-            # Schedule the async handler on the running event loop from this paho thread
-            import asyncio
-            loop = asyncio.get_event_loop()
-            loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(self._handle_fire_alert(payload))
-            )
+            # Schedule the coroutine on the FastAPI event loop (captured at start()).
+            # asyncio.get_event_loop() from a paho thread is unreliable — always
+            # use the loop reference stored when start() was awaited.
+            if self._loop:
+                asyncio.run_coroutine_threadsafe(
+                    self._handle_fire_alert(payload), self._loop
+                )
             return
 
         try:
@@ -242,6 +245,10 @@ class Gateway:
     async def start(self) -> None:
         """Connect to Adafruit IO and launch background asyncio tasks."""
         settings = get_settings()
+
+        # Capture the running event loop so the paho thread can safely schedule
+        # coroutines onto it via asyncio.run_coroutine_threadsafe.
+        self._loop = asyncio.get_running_loop()
 
         # Initialise the command queue (must happen inside the running event loop)
         CommandQueue.get_instance().init()

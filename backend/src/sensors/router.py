@@ -2,20 +2,6 @@ import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
-
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
-
-from src.auth.dependencies import get_current_active_user
-from src.auth.schemas import UserPublic
-from src.core.database import get_database
-from src.core.event_bus import SensorEventBus
-from src.core.alert_bus import AlertEventBus
-
-import asyncio
-import json
-import uuid
-from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -280,43 +266,3 @@ async def get_history(
         results.append(doc)
 
     return {"total": total, "page": page, "limit": limit, "data": results}
-
-
-# ---------------------------------------------------------------------------
-# Server-Sent Events — real-time stream pushed every second
-# ---------------------------------------------------------------------------
-
-@router.get(
-    "/stream",
-    summary="Real-time SSE stream of sensor readings (1 s interval)",
-    response_class=StreamingResponse,
-)
-async def stream_sensors(current_user: UserPublic = Depends(get_current_active_user)):
-    """
-    Opens a persistent Server-Sent Events connection.
-    The backend pushes the latest sensor snapshot every second.
-    Clients (browser / mobile) can consume this with the EventSource API.
-    """
-    async def event_generator():
-        db = get_database()
-        while True:
-            try:
-                doc = await db["sensor_readings"].find_one(sort=[("timestamp", -1)])
-                if doc:
-                    doc["_id"] = str(doc["_id"])
-                    doc["timestamp"] = doc["timestamp"].isoformat()
-                    yield f"data: {json.dumps(doc)}\n\n"
-                else:
-                    yield "data: {}\n\n"
-            except Exception as exc:
-                yield f"data: {json.dumps({'error': str(exc)})}\n\n"
-            await asyncio.sleep(1)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
