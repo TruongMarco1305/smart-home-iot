@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Thermometer, Droplets, Sun, Power, Cpu, AlertTriangle, WifiOff } from 'lucide-react';
+import { Thermometer, Droplets, Sun, Cpu, AlertTriangle, WifiOff } from 'lucide-react';
 import { useSensorStore } from '../stores/sensorStore';
 import { useSensorStream } from '../hooks/useSensorStream';
 import { devicesApi } from '../api/devices';
@@ -211,24 +211,6 @@ export function DashboardPage() {
           <div key={label} className="bg-slate-800 rounded-2xl p-4 text-center">
             <p className="text-2xl font-bold text-white">{value}</p>
             <p className="text-xs text-slate-400 mt-1">{label}</p>
-          </div>
-        ))}
-      </section>
-
-      {/* Power button shortcut */}
-      <section className="flex gap-3 flex-wrap">
-        {devices.map((d) => (
-          <div key={d.id} className="flex items-center gap-2 text-sm text-slate-300">
-            <Power
-              size={14}
-              className={d.state === 'ON' ? 'text-emerald-400' : 'text-slate-500'}
-            />
-            <span>{d.name}</span>
-            <span
-              className={`text-xs font-semibold ${d.state === 'ON' ? 'text-emerald-400' : 'text-slate-500'}`}
-            >
-              {d.state}
-            </span>
           </div>
         ))}
       </section>
