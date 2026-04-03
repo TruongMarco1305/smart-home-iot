@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Sun, Droplets, Wifi, WifiOff } from 'lucide-react';
+import { Plus, Sun, Droplets, Wifi, WifiOff, AlertTriangle } from 'lucide-react';
 import { devicesApi } from '../api/devices';
 import { feedsApi } from '../api/feeds';
 import { useAuthStore } from '../stores/authStore';
+import { useSensorStore } from '../stores/sensorStore';
+import { useSensorStream } from '../hooks/useSensorStream';
 import type { Device, CreateDevicePayload, DeviceType } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -39,10 +41,13 @@ function ToggleSwitch({
   );
 }
 
-function DeviceCard({ device }: { device: Device }) {
+function DeviceCard({ device, isConnected }: { device: Device; isConnected: boolean }) {
   const qc = useQueryClient();
   const role = useAuthStore((s) => s.user?.role);
   const canControl = role === 'admin' || role === 'operator';
+
+  // Block control if: no permission, pending, device reported offline, or SSE disconnected
+  const controlDisabled = !canControl || !device.is_online || !isConnected;
 
   const { mutate, isPending } = useMutation({
     mutationFn: (state: 'ON' | 'OFF') => devicesApi.command(device.id, state),
@@ -52,31 +57,55 @@ function DeviceCard({ device }: { device: Device }) {
   const isOn = device.state === 'ON';
 
   return (
-    <div className="bg-slate-800 rounded-2xl p-5 space-y-4">
+    <div className={`rounded-2xl p-5 space-y-4 ${
+      !device.is_online ? 'bg-slate-800/50 border border-slate-700' : 'bg-slate-800'
+    }`}>
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
           <div
-            className={`p-2.5 rounded-xl ${device.device_type === 'light' ? 'bg-amber-500/20' : 'bg-cyan-500/20'}`}
+            className={`p-2.5 rounded-xl ${
+              !device.is_online
+                ? 'bg-slate-700'
+                : device.device_type === 'light' ? 'bg-amber-500/20' : 'bg-cyan-500/20'
+            }`}
           >
             {device.device_type === 'light' ? (
-              <Sun size={20} className="text-amber-400" />
+              <Sun size={20} className={device.is_online ? 'text-amber-400' : 'text-slate-500'} />
             ) : (
-              <Droplets size={20} className="text-cyan-400" />
+              <Droplets size={20} className={device.is_online ? 'text-cyan-400' : 'text-slate-500'} />
             )}
           </div>
           <div>
-            <p className="font-semibold text-white">{device.name}</p>
+            <p className={`font-semibold ${device.is_online ? 'text-white' : 'text-slate-500'}`}>
+              {device.name}
+            </p>
             <p className="text-xs text-slate-500 capitalize">{device.room}</p>
           </div>
         </div>
-        <div className="flex items-center gap-1 text-xs text-slate-500">
+        <div className="flex items-center gap-1 text-xs">
           {device.is_online ? (
             <><Wifi size={12} className="text-emerald-400" /><span className="text-emerald-400">Online</span></>
           ) : (
-            <><WifiOff size={12} /><span>Offline</span></>
+            <><WifiOff size={12} className="text-slate-500" /><span className="text-slate-500">Offline</span></>
           )}
         </div>
       </div>
+
+      {/* Offline notice */}
+      {!device.is_online && (
+        <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-700/50 rounded-lg px-3 py-2">
+          <AlertTriangle size={12} className="shrink-0" />
+          Device is offline — control unavailable
+        </div>
+      )}
+
+      {/* No SSE connection notice (device itself may be fine) */}
+      {device.is_online && !isConnected && (
+        <div className="flex items-center gap-2 text-xs text-amber-500/80 bg-amber-500/10 rounded-lg px-3 py-2">
+          <AlertTriangle size={12} className="shrink-0" />
+          No live connection — control disabled
+        </div>
+      )}
 
       <div className="flex items-center justify-between">
         <div>
@@ -84,13 +113,17 @@ function DeviceCard({ device }: { device: Device }) {
           <p className="text-xs font-mono text-slate-300 mt-0.5">{device.adafruit_feed}</p>
         </div>
         <div className="flex items-center gap-2.5">
-          <span className={`text-xs font-semibold ${isOn ? 'text-indigo-400' : 'text-slate-500'}`}>
-            {isOn ? 'ON' : 'OFF'}
+          <span className={`text-xs font-semibold ${
+            !device.is_online || !isConnected
+              ? 'text-slate-600'
+              : isOn ? 'text-indigo-400' : 'text-slate-500'
+          }`}>
+            {!device.is_online ? '—' : isOn ? 'ON' : 'OFF'}
           </span>
           <ToggleSwitch
             checked={isOn}
             onChange={(val) => mutate(val ? 'ON' : 'OFF')}
-            disabled={!canControl || isPending}
+            disabled={controlDisabled || isPending}
           />
         </div>
       </div>
@@ -243,7 +276,10 @@ function RegisterDeviceModal({ onClose }: { onClose: () => void }) {
 }
 
 export function DevicesPage() {
+  useSensorStream();
   const role = useAuthStore((s) => s.user?.role);
+  const isConnected = useSensorStore((s) => s.isConnected);
+  const isDeviceOnline = useSensorStore((s) => s.isDeviceOnline);
   const [showModal, setShowModal] = useState(false);
 
   const { data: devices = [], isLoading } = useQuery({
@@ -270,6 +306,26 @@ export function DevicesPage() {
         )}
       </div>
 
+      {/* No SSE stream banner */}
+      {!isConnected && (
+        <div className="flex items-center gap-3 bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3 text-sm text-amber-400">
+          <AlertTriangle size={16} className="shrink-0" />
+          <span>
+            <span className="font-semibold">No live connection to backend</span> — device controls are disabled until the stream reconnects.
+          </span>
+        </div>
+      )}
+
+      {/* IoT device offline banner */}
+      {isConnected && !isDeviceOnline && (
+        <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-sm text-red-400">
+          <AlertTriangle size={16} className="shrink-0" />
+          <span>
+            <span className="font-semibold">IoT device is offline</span> — no signal from Yolo:Bit in the last 60 s. Controls are disabled.
+          </span>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="text-slate-400 text-sm">Loading…</div>
       ) : devices.length === 0 ? (
@@ -282,7 +338,7 @@ export function DevicesPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {devices.map((d) => (
-            <DeviceCard key={d.id} device={d} />
+            <DeviceCard key={d.id} device={d} isConnected={isConnected && isDeviceOnline} />
           ))}
         </div>
       )}

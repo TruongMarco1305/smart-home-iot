@@ -27,7 +27,7 @@ Design pattern: Singleton
 
 import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import paho.mqtt.client as mqtt
 
@@ -36,6 +36,9 @@ from src.core.database import DatabaseManager
 from src.core.mqtt import CommandQueue
 from src.core.event_bus import SensorEventBus
 from src.core.alert_bus import AlertEventBus, AlertEvent
+
+# If no MQTT message arrives within this window the device is considered offline
+DEVICE_OFFLINE_AFTER_SECONDS = 60
 
 
 class Gateway:
@@ -64,6 +67,9 @@ class Gateway:
         self._feeds_pending: set = set()
         self._cache_updated_at: datetime | None = None
         self._last_saved:       datetime | None = None
+        # Timestamp of the most recent MQTT message from the Yolo:Bit (any feed).
+        # Used by the watchdog to decide whether the device is online.
+        self._last_mqtt_at: datetime | None = None
         self._client: mqtt.Client | None = None
         self._tasks: list[asyncio.Task] = []
         # Captured in start() — used by the paho thread to schedule coroutines
@@ -78,6 +84,13 @@ class Gateway:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
+
+    def is_device_online(self) -> bool:
+        """True if an MQTT message arrived within DEVICE_OFFLINE_AFTER_SECONDS."""
+        if self._last_mqtt_at is None:
+            return False
+        age = (datetime.now(timezone.utc) - self._last_mqtt_at).total_seconds()
+        return age < DEVICE_OFFLINE_AFTER_SECONDS
 
     # ------------------------------------------------------------------ #
     # Feed helpers                                                         #
@@ -143,6 +156,8 @@ class Gateway:
             if self._feeds_pending >= {"temperature", "humidity", "illuminance"}:
                 self._cache_updated_at = datetime.now(timezone.utc)
                 self._feeds_pending.clear()
+            # Stamp the most recent MQTT activity (used by the watchdog)
+            self._last_mqtt_at = datetime.now(timezone.utc)
             print(
                 f"📥 Adafruit [{topic.split('/')[-1]}] = {value}  "
                 f"(T={self._sensor_cache['temperature']}  "
@@ -219,6 +234,51 @@ class Gateway:
             except Exception as exc:
                 print(f"❌ Sensor push error: {exc}")
 
+    async def _device_watchdog_loop(self) -> None:
+        """
+        Runs every 15 s.  Compares the current online state (derived from
+        _last_mqtt_at) against what is stored in MongoDB and updates the
+        is_online field on ALL devices when it changes.
+
+        Also injects a lightweight sentinel event into the SensorEventBus so
+        the SSE stream carries the updated online flag to the frontend without
+        the frontend needing to poll /api/devices.
+        """
+        db_manager = DatabaseManager.get_instance()
+        event_bus  = SensorEventBus.get_instance()
+        # Track what we last wrote so we only touch the DB on state change
+        _prev_online: bool | None = None
+
+        while True:
+            await asyncio.sleep(15)
+            try:
+                online = self.is_device_online()
+                if online == _prev_online:
+                    continue  # nothing changed
+
+                _prev_online = online
+                print(f"📶 Device watchdog: is_online → {online}")
+
+                # Update every device document in one bulk write
+                await db_manager.database["devices"].update_many(
+                    {},
+                    {"$set": {"is_online": online, "updated_at": datetime.now(timezone.utc)}},
+                )
+
+                # Push a sentinel into the event bus so connected SSE clients
+                # pick up the change immediately (no page refresh needed).
+                # The payload uses a special key "_device_status" that the
+                # frontend hook can recognise and forward to the device store.
+                await event_bus.notify({
+                    "_device_status": True,
+                    "is_online": online,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"❌ Device watchdog error: {exc}")
+
     async def _command_drain_loop(self) -> None:
         """Forward queued device commands to Adafruit IO."""
         queue = CommandQueue.get_instance().queue
@@ -280,8 +340,9 @@ class Gateway:
         print(f"🔌 MQTT client_id: {client_id}")
 
         # Launch asyncio background tasks
-        self._tasks.append(asyncio.create_task(self._sensor_push_loop(),   name="sensor-push"))
-        self._tasks.append(asyncio.create_task(self._command_drain_loop(), name="command-drain"))
+        self._tasks.append(asyncio.create_task(self._sensor_push_loop(),    name="sensor-push"))
+        self._tasks.append(asyncio.create_task(self._command_drain_loop(),  name="command-drain"))
+        self._tasks.append(asyncio.create_task(self._device_watchdog_loop(),name="device-watchdog"))
 
         print("🚀 Gateway started (embedded in FastAPI process)")
 

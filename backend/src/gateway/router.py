@@ -15,9 +15,10 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from src.auth.dependencies import require_roles
+from src.auth.dependencies import get_current_active_user, require_roles
 from src.auth.schemas import UserPublic
 from src.core.database import get_database
+from src.core.gateway import Gateway
 from src.models.user import Role
 
 router = APIRouter(prefix="/gateway", tags=["Gateway"])
@@ -64,3 +65,28 @@ async def set_collection_status(body: CollectionStatus, _: UserPublic = _admin):
         {"$set": {"is_collect": body.collecting, "updated_at": datetime.now(timezone.utc)}},
     )
     return CollectionStatus(collecting=body.collecting)
+
+
+# ---------------------------------------------------------------------------
+# IoT device liveness
+# ---------------------------------------------------------------------------
+
+class DeviceStatus(BaseModel):
+    is_online: bool
+    last_seen: str | None  # ISO timestamp or null
+
+
+@router.get(
+    "/device-status",
+    response_model=DeviceStatus,
+    summary="Check whether the IoT device is currently online (any authenticated user)",
+)
+async def get_device_status(_: UserPublic = Depends(get_current_active_user)):
+    """
+    Returns whether the gateway has received an MQTT message from the Yolo:Bit
+    within the last 60 seconds.  The frontend calls this once on page load;
+    after that it relies on the SSE watchdog sentinel to stay in sync.
+    """
+    gw = Gateway.get_instance()
+    last_seen = gw._last_mqtt_at.isoformat() if gw._last_mqtt_at else None
+    return DeviceStatus(is_online=gw.is_device_online(), last_seen=last_seen)

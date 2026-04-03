@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Thermometer, Droplets, Sun, Power, Cpu } from 'lucide-react';
+import { Thermometer, Droplets, Sun, Power, Cpu, AlertTriangle, WifiOff } from 'lucide-react';
 import { useSensorStore } from '../stores/sensorStore';
 import { useSensorStream } from '../hooks/useSensorStream';
 import { devicesApi } from '../api/devices';
@@ -34,10 +34,11 @@ function SensorCard({
   );
 }
 
-function DeviceToggle({ device }: { device: Device }) {
+function DeviceToggle({ device, isConnected }: { device: Device; isConnected: boolean }) {
   const qc = useQueryClient();
   const role = useAuthStore((s) => s.user?.role);
   const canControl = role === 'admin' || role === 'operator';
+  const controlDisabled = !canControl || !device.is_online || !isConnected;
 
   const { mutate, isPending } = useMutation({
     mutationFn: (state: 'ON' | 'OFF') => devicesApi.command(device.id, state),
@@ -47,33 +48,43 @@ function DeviceToggle({ device }: { device: Device }) {
   const isOn = device.state === 'ON';
 
   return (
-    <div className="flex items-center justify-between bg-slate-800 rounded-2xl px-5 py-4">
+    <div className={`flex items-center justify-between rounded-2xl px-5 py-4 ${
+      !device.is_online ? 'bg-slate-800/50 border border-slate-700' : 'bg-slate-800'
+    }`}>
       <div className="flex items-center gap-3">
         <div
-          className={`p-2 rounded-lg ${device.device_type === 'light' ? 'bg-amber-500/20' : 'bg-cyan-500/20'}`}
+          className={`p-2 rounded-lg ${
+            !device.is_online ? 'bg-slate-700'
+            : device.device_type === 'light' ? 'bg-amber-500/20' : 'bg-cyan-500/20'
+          }`}
         >
           {device.device_type === 'light' ? (
-            <Sun size={18} className="text-amber-400" />
+            <Sun size={18} className={device.is_online ? 'text-amber-400' : 'text-slate-500'} />
           ) : (
-            <Droplets size={18} className="text-cyan-400" />
+            <Droplets size={18} className={device.is_online ? 'text-cyan-400' : 'text-slate-500'} />
           )}
         </div>
         <div>
-          <p className="text-sm font-medium text-white">{device.name}</p>
-          <p className="text-xs text-slate-500 capitalize">{device.room}</p>
+          <p className={`text-sm font-medium ${device.is_online ? 'text-white' : 'text-slate-500'}`}>
+            {device.name}
+          </p>
+          <p className="text-xs text-slate-500 capitalize">
+            {device.is_online ? device.room : `${device.room} — offline`}
+          </p>
         </div>
       </div>
 
       <button
         onClick={() => mutate(isOn ? 'OFF' : 'ON')}
-        disabled={!canControl || isPending}
-        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none disabled:opacity-40 ${
-          isOn ? 'bg-indigo-600' : 'bg-slate-600'
+        disabled={controlDisabled || isPending}
+        title={!device.is_online ? 'Device is offline' : !isConnected ? 'No live connection' : undefined}
+        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed ${
+          isOn && device.is_online ? 'bg-indigo-600' : 'bg-slate-600'
         }`}
       >
         <span
           className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
-            isOn ? 'translate-x-5' : 'translate-x-0'
+            isOn && device.is_online ? 'translate-x-5' : 'translate-x-0'
           }`}
         />
       </button>
@@ -87,6 +98,7 @@ export function DashboardPage() {
 
   const latest = useSensorStore((s) => s.latest);
   const isConnected = useSensorStore((s) => s.isConnected);
+  const isDeviceOnline = useSensorStore((s) => s.isDeviceOnline);
 
   const { data: devices = [] } = useQuery({
     queryKey: ['devices'],
@@ -129,6 +141,18 @@ export function DashboardPage() {
         <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">
           Sensor Readings
         </h2>
+        {!isConnected && (
+          <div className="flex items-center gap-3 mb-4 bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3 text-sm text-amber-400">
+            <WifiOff size={15} className="shrink-0" />
+            <span>Stream disconnected — showing last known values. Live data will resume automatically.</span>
+          </div>
+        )}
+        {isConnected && !isDeviceOnline && (
+          <div className="flex items-center gap-3 mb-4 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-sm text-red-400">
+            <AlertTriangle size={15} className="shrink-0" />
+            <span><span className="font-semibold">IoT device is offline</span> — no signal from Yolo:Bit in the last 60 s.</span>
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <SensorCard
             label="Temperature"
@@ -170,7 +194,7 @@ export function DashboardPage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {devices.map((d) => (
-              <DeviceToggle key={d.id} device={d} />
+              <DeviceToggle key={d.id} device={d} isConnected={isConnected && isDeviceOnline} />
             ))}
           </div>
         )}

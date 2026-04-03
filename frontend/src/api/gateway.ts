@@ -17,4 +17,11 @@ export const gatewayApi = {
     );
     return data;
   },
+
+  getDeviceStatus: async (): Promise<{ is_online: boolean; last_seen: string | null }> => {
+    const { data } = await apiClient.get<{ is_online: boolean; last_seen: string | null }>(
+      '/gateway/device-status',
+    );
+    return data;
+  },
 };
