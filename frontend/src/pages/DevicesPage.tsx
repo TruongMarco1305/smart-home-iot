@@ -1,10 +1,43 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Sun, Droplets, Power, Wifi, WifiOff } from 'lucide-react';
+import { Plus, Sun, Droplets, Wifi, WifiOff } from 'lucide-react';
 import { devicesApi } from '../api/devices';
 import { feedsApi } from '../api/feeds';
 import { useAuthStore } from '../stores/authStore';
 import type { Device, CreateDevicePayload, DeviceType } from '../types';
+
+// ---------------------------------------------------------------------------
+// Toggle switch component
+// ---------------------------------------------------------------------------
+
+function ToggleSwitch({
+  checked,
+  onChange,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (val: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      disabled={disabled}
+      className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-40 ${
+        checked ? 'bg-indigo-600' : 'bg-slate-600'
+      }`}
+    >
+      <span
+        className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform duration-200 ${
+          checked ? 'translate-x-6' : 'translate-x-1'
+        }`}
+      />
+    </button>
+  );
+}
 
 function DeviceCard({ device }: { device: Device }) {
   const qc = useQueryClient();
@@ -50,18 +83,16 @@ function DeviceCard({ device }: { device: Device }) {
           <p className="text-xs text-slate-500">Feed</p>
           <p className="text-xs font-mono text-slate-300 mt-0.5">{device.adafruit_feed}</p>
         </div>
-        <button
-          onClick={() => mutate(isOn ? 'OFF' : 'ON')}
-          disabled={!canControl || isPending}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-40 ${
-            isOn
-              ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
-              : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
-          }`}
-        >
-          <Power size={14} />
-          {isOn ? 'ON' : 'OFF'}
-        </button>
+        <div className="flex items-center gap-2.5">
+          <span className={`text-xs font-semibold ${isOn ? 'text-indigo-400' : 'text-slate-500'}`}>
+            {isOn ? 'ON' : 'OFF'}
+          </span>
+          <ToggleSwitch
+            checked={isOn}
+            onChange={(val) => mutate(val ? 'ON' : 'OFF')}
+            disabled={!canControl || isPending}
+          />
+        </div>
       </div>
 
       <p className="text-xs text-slate-600">

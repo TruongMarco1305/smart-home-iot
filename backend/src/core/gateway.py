@@ -35,7 +35,7 @@ from src.core.config import get_settings
 from src.core.database import DatabaseManager
 from src.core.mqtt import CommandQueue
 from src.core.event_bus import SensorEventBus
-from src.core.fire_alert import FireAlertObserver
+from src.core.alert_bus import AlertEventBus, AlertEvent
 
 
 class Gateway:
@@ -84,6 +84,7 @@ class Gateway:
     def _temp_feed(self)        -> str: return f"{get_settings().adafruit_io_username}/feeds/temperature"
     def _humidity_feed(self)    -> str: return f"{get_settings().adafruit_io_username}/feeds/humidity"
     def _illuminance_feed(self) -> str: return f"{get_settings().adafruit_io_username}/feeds/illuminance"
+    def _fire_alert_feed(self)  -> str: return f"{get_settings().adafruit_io_username}/feeds/fire-alert"
 
     # ------------------------------------------------------------------ #
     # Paho MQTT callbacks                                                  #
@@ -95,7 +96,8 @@ class Gateway:
             client.subscribe(self._temp_feed())
             client.subscribe(self._humidity_feed())
             client.subscribe(self._illuminance_feed())
-            print("📡 Subscribed to temperature / humidity / illuminance feeds")
+            client.subscribe(self._fire_alert_feed())
+            print("📡 Subscribed to temperature / humidity / illuminance / fire-alert feeds")
         else:
             print(f"❌ Adafruit IO connect failed. Code: {reason_code}")
 
@@ -109,6 +111,18 @@ class Gateway:
     def _on_message(self, client, userdata, msg):
         topic   = msg.topic
         payload = msg.payload.decode().strip()
+
+        # ── Fire-alert feed (payload is a plain string, not a number) ──
+        if topic == self._fire_alert_feed():
+            print(f"🚨 Fire-alert signal received: {payload!r}")
+            # Schedule the async handler on the running event loop from this paho thread
+            import asyncio
+            loop = asyncio.get_event_loop()
+            loop.call_soon_threadsafe(
+                lambda: asyncio.ensure_future(self._handle_fire_alert(payload))
+            )
+            return
+
         try:
             value = float(payload)
             if topic == self._temp_feed():
@@ -134,6 +148,18 @@ class Gateway:
             )
         except ValueError:
             print(f"⚠️  Non-numeric payload on {topic}: {payload!r}")
+
+    async def _handle_fire_alert(self, payload: str) -> None:
+        """Publish a fire AlertEvent directly to the AlertEventBus."""
+        alert = AlertEvent(
+            level="fire",
+            message=f"🔥 FIRE ALERT received from device: {payload}",
+            temperature=0.0,
+            humidity=0.0,
+            illuminance=0,
+            device_id="yolobit-living-room",
+        )
+        await AlertEventBus.get_instance().notify(alert)
 
     # ------------------------------------------------------------------ #
     # Asyncio tasks                                                        #
@@ -250,15 +276,10 @@ class Gateway:
         self._tasks.append(asyncio.create_task(self._sensor_push_loop(),   name="sensor-push"))
         self._tasks.append(asyncio.create_task(self._command_drain_loop(), name="command-drain"))
 
-        # Start the fire-alert observer (Observer pattern)
-        FireAlertObserver.get_instance().start()
-
         print("🚀 Gateway started (embedded in FastAPI process)")
 
     async def stop(self) -> None:
         """Cancel background tasks and disconnect from Adafruit IO."""
-        FireAlertObserver.get_instance().stop()
-
         for task in self._tasks:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
